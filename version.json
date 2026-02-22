@@ -1,0 +1,293 @@
+import sys, os, subprocess, json, webbrowser
+from PyQt5 import QtGui
+from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, 
+                             QLineEdit, QVBoxLayout, QFrame, QScrollArea, QFileDialog, QHBoxLayout, QGraphicsDropShadowEffect)
+from PyQt5.QtCore import Qt, QPoint, QSettings, QSize
+from PyQt5.QtGui import QColor, QFont, QPixmap, QIcon
+
+# Список серверов
+SERVERS = {
+    "RED": {"ip": "80.66.82.192:7777", "color": "#FF453A"},
+    "YELLOW": {"ip": "80.66.82.193:7777", "color": "#FFD60A"},
+    "GREEN": {"ip": "80.66.82.194:7777", "color": "#32D74B"},
+    "AZURE": {"ip": "80.66.82.195:7777", "color": "#0A84FF"},
+    "SILVER": {"ip": "80.66.82.196:7777", "color": "#98989D"},
+    "ROSE": {"ip": "80.66.71.6:7777", "color": "#FF375F"},
+    "BLACK": {"ip": "80.66.82.40:7777", "color": "#E5E5EA"},
+    "SKY": {"ip": "80.66.82.41:7777", "color": "#64D2FF"},
+    "TITAN": {"ip": "80.66.82.165:7777", "color": "#5E5CE6"},
+    "FIRE": {"ip": "80.66.82.163:7777", "color": "#FF9F0A"}
+}
+
+def res_path(rel):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, rel).replace("\\", "/")
+    return os.path.join(os.path.abspath("."), rel).replace("\\", "/")
+
+class AmazingElite(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.settings = QSettings("Lisha", "EliteLauncher")
+        
+        self.setMinimumSize(950, 700)
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        self.game_path = self.settings.value("game_path", "")
+        nicks_raw = self.settings.value("server_nicks", "{}")
+        try: self.server_nicks = json.loads(nicks_raw)
+        except: self.server_nicks = {}
+
+        self.current_color = "#FFFFFF"
+        self.selected_srv = None
+        self._drag_pos = None
+        
+        self.initUI()
+
+    def apply_glow(self, widget, color_hex, strength=25):
+        glow = QGraphicsDropShadowEffect()
+        glow.setBlurRadius(strength)
+        glow.setColor(QColor(color_hex))
+        glow.setOffset(0, 0)
+        widget.setGraphicsEffect(glow)
+
+    def initUI(self):
+        self.main_layout = QVBoxLayout(self)
+        self.main_frame = QFrame()
+        self.main_frame.setStyleSheet("QFrame { background-color: #080809; border-radius: 30px; border: 1px solid #1C1C1E; }")
+        self.main_layout.addWidget(self.main_frame)
+
+        self.content_h = QHBoxLayout(self.main_frame)
+        self.content_h.setSpacing(0)
+        self.content_h.setContentsMargins(0,0,0,0)
+
+        # --- ЛЕВАЯ ПАНЕЛЬ ---
+        self.sidebar = QFrame()
+        self.sidebar.setFixedWidth(260)
+        self.sidebar.setStyleSheet("background-color: #040405; border-top-left-radius: 30px; border-bottom-left-radius: 30px; border-right: 1px solid #1C1C1E;")
+        self.content_h.addWidget(self.sidebar)
+
+        side_v = QVBoxLayout(self.sidebar)
+        side_v.setContentsMargins(0, 20, 0, 20)
+
+        # Логотип по центру
+        self.logo_cont = QWidget()
+        self.logo_cont.setFixedHeight(100)
+        logo_l = QVBoxLayout(self.logo_cont)
+        logo_l.setAlignment(Qt.AlignCenter)
+        self.logo_img = QLabel()
+        pix = QPixmap(res_path("assets/logo.png"))
+        if not pix.isNull():
+            self.logo_img.setPixmap(pix.scaledToWidth(180, Qt.SmoothTransformation))
+        self.logo_img.setStyleSheet("border: none;")
+        logo_l.addWidget(self.logo_img)
+        side_v.addWidget(self.logo_cont)
+
+        # Серверы
+        srv_w = QWidget()
+        self.srv_l = QVBoxLayout(srv_w)
+        self.srv_l.setSpacing(5)
+        self.btns = []
+        for name, data in SERVERS.items():
+            btn = QPushButton(name.upper())
+            btn.setCheckable(True)
+            btn.setFixedHeight(40)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("QPushButton { color: #444; background: transparent; font-weight: 900; font-size: 16px; border: none; }")
+            btn.clicked.connect(lambda ch, b=btn, n=name, c=data['color']: self.select_server(b, n, c))
+            self.srv_l.addWidget(btn)
+            self.btns.append(btn)
+        
+        self.srv_l.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(srv_w)
+        scroll.setStyleSheet("background: transparent; border: none;")
+        side_v.addWidget(scroll)
+
+        # --- ПРАВАЯ ЧАСТЬ ---
+        self.right_area = QWidget()
+        self.right_v = QVBoxLayout(self.right_area)
+        self.right_v.setContentsMargins(30, 15, 30, 30)
+        self.content_h.addWidget(self.right_area)
+
+        # Панель управления
+        top_h = QHBoxLayout(); top_h.addStretch()
+        
+        self.info_btn = QPushButton("INFO")
+        self.info_btn.setFixedSize(65, 30)
+        self.info_btn.setCursor(Qt.PointingHandCursor)
+        self.info_btn.setStyleSheet("QPushButton { background: #141416; color: #666; border: 1px solid #222; border-radius: 8px; font-weight: bold; font-size: 10px; } QPushButton:hover { color: white; border-color: #444; }")
+        self.info_btn.clicked.connect(self.show_security_info)
+        top_h.addWidget(self.info_btn)
+
+        for icon_file, link in [("tg.png", "https://t.me/lishaikaaaa"), ("vk.png", "https://vk.com/lishaika")]:
+            btn = QPushButton(); btn.setFixedSize(32, 32); btn.setCursor(Qt.PointingHandCursor)
+            path = res_path(f"assets/{icon_file}")
+            if os.path.exists(path):
+                btn.setIcon(QIcon(path)); btn.setIconSize(QSize(22, 22))
+            btn.setStyleSheet("border: none; background: transparent;")
+            btn.clicked.connect(lambda ch, l=link: webbrowser.open(l))
+            top_h.addWidget(btn)
+
+        for icon, func in [("⚙", self.toggle_asi), ("—", self.showMinimized), ("✕", self.close)]:
+            b = QPushButton(icon); b.setFixedSize(40, 40)
+            b.setStyleSheet("QPushButton { color: #555; font-size: 18px; border: none; background: transparent; } QPushButton:hover { color: white; }")
+            b.clicked.connect(func); top_h.addWidget(b)
+        self.right_v.addLayout(top_h)
+
+        self.photo = QLabel(); self.photo.setAlignment(Qt.AlignCenter)
+        self.right_v.addWidget(self.photo, stretch=5)
+
+        # Нижняя часть
+        self.path_label = QLabel(f"Путь: {self.game_path if self.game_path else 'не выбран'}")
+        self.path_label.setStyleSheet("color: #444; font-size: 11px;")
+        self.right_v.addWidget(self.path_label)
+
+        bottom_h = QHBoxLayout()
+        self.btn_folder = QPushButton("📁")
+        self.btn_folder.setFixedSize(55, 55)
+        self.btn_folder.setStyleSheet("background: #111; border: 1px solid #1C1C1E; border-radius: 12px; color: white;")
+        self.btn_folder.clicked.connect(self.select_folder)
+        
+        self.nick = QLineEdit(); self.nick.setPlaceholderText("НИКНЕЙМ...")
+        self.nick.setFixedHeight(55)
+        self.nick.textChanged.connect(self.on_nick_changed)
+        self.nick.setStyleSheet("background: #0D0D0E; border: 1px solid #1C1C1E; border-radius: 12px; color: white; padding-left: 15px; font-weight: bold;")
+        
+        self.play_btn = QPushButton("ИГРАТЬ")
+        self.play_btn.setFixedHeight(55)
+        self.play_btn.setStyleSheet("background: #FFF; color: black; font-weight: 900; border-radius: 12px;")
+        self.play_btn.clicked.connect(self.start_game)
+        
+        bottom_h.addWidget(self.btn_folder)
+        bottom_h.addWidget(self.nick, stretch=2)
+        bottom_h.addWidget(self.play_btn, stretch=1)
+        self.right_v.addLayout(bottom_h)
+
+        # --- ОВЕРЛЕИ ---
+        self.overlay_bg = QFrame(self.main_frame)
+        self.overlay_bg.setGeometry(0, 0, 950, 700)
+        self.overlay_bg.setStyleSheet("background: rgba(0,0,0,220); border-radius: 30px;")
+        self.overlay_bg.hide()
+
+        # ОКНО БЕЗОПАСНОСТИ
+        self.info_box = QFrame(self.overlay_bg)
+        self.info_box.setFixedSize(450, 300)
+        self.info_box.move(250, 200)
+        self.info_box.setStyleSheet("background: #0D0D0E; border: 1px solid #222; border-radius: 20px;")
+        self.info_box.hide()
+        ib_l = QVBoxLayout(self.info_box); ib_l.setContentsMargins(25, 25, 25, 25)
+        inf_title = QLabel("БЕЗОПАСНОСТЬ"); inf_title.setStyleSheet("color: white; font-weight: 900; font-size: 20px; border: none;")
+        inf_text = QLabel("Не скачивайте файлы у непроверенных лиц. Берегите свой аккаунт."); inf_text.setWordWrap(True); inf_text.setStyleSheet("color: #777; font-size: 14px; border: none;")
+        ok_btn = QPushButton("Я ПОНЯЛ"); ok_btn.setFixedHeight(45); ok_btn.setStyleSheet("background: white; color: black; border-radius: 10px; font-weight: 900;")
+        ok_btn.clicked.connect(self.overlay_bg.hide)
+        ib_l.addWidget(inf_title, alignment=Qt.AlignCenter); ib_l.addWidget(inf_text, alignment=Qt.AlignCenter); ib_l.addWidget(ok_btn)
+
+        # ОКНО ASI
+        self.asi_box = QFrame(self.overlay_bg)
+        self.asi_box.setFixedSize(500, 450)
+        self.asi_box.move(225, 125)
+        self.asi_box.setStyleSheet("background: #0D0D0E; border: 1px solid #222; border-radius: 20px;")
+        self.asi_box.hide()
+        ab_l = QVBoxLayout(self.asi_box); ab_l.setContentsMargins(20, 20, 20, 20)
+        ab_title = QLabel("MOD MANAGER"); ab_title.setStyleSheet("color: white; font-weight: 900; border: none; font-size: 18px;")
+        ab_l.addWidget(ab_title, alignment=Qt.AlignCenter)
+        self.asi_scroll = QScrollArea(); self.asi_scroll.setWidgetResizable(True); self.asi_scroll.setStyleSheet("background: transparent; border: 1px solid #1C1C1E; border-radius: 10px;")
+        self.asi_cont = QWidget(); self.asi_layout = QVBoxLayout(self.asi_cont); self.asi_layout.setAlignment(Qt.AlignTop)
+        self.asi_scroll.setWidget(self.asi_cont); ab_l.addWidget(self.asi_scroll)
+        cls_asi = QPushButton("ЗАКРЫТЬ"); cls_asi.setFixedHeight(40); cls_asi.setStyleSheet("background: #1C1C1E; color: white; border-radius: 8px;")
+        cls_asi.clicked.connect(self.overlay_bg.hide); ab_l.addWidget(cls_asi)
+
+        self.load_photo()
+
+    def on_nick_changed(self, text):
+        if self.selected_srv:
+            self.server_nicks[self.selected_srv] = text
+            self.settings.setValue("server_nicks", json.dumps(self.server_nicks))
+
+    def select_server(self, btn, name, color):
+        for b in self.btns:
+            b.setChecked(False)
+            b.setStyleSheet("QPushButton { color: #444; background: transparent; font-weight: 900; font-size: 16px; border: none; }")
+            b.setGraphicsEffect(None)
+        btn.setChecked(True)
+        btn.setStyleSheet(f"QPushButton {{ color: {color}; background: transparent; font-weight: 900; font-size: 18px; border: none; }}")
+        self.apply_glow(btn, color)
+        self.selected_srv = name
+        self.current_color = color
+        self.nick.setText(self.server_nicks.get(name, ""))
+        self.play_btn.setStyleSheet(f"background: {color}; color: black; font-weight: 900; border-radius: 12px;")
+        self.apply_glow(self.play_btn, color)
+
+    def show_security_info(self):
+        self.asi_box.hide(); self.info_box.show(); self.overlay_bg.show()
+
+    def toggle_asi(self):
+        self.info_box.hide(); self.asi_box.show(); self.overlay_bg.show(); self.refresh_asi_list()
+
+    def refresh_asi_list(self):
+        for i in reversed(range(self.asi_layout.count())):
+            w = self.asi_layout.itemAt(i).widget()
+            if w: w.setParent(None)
+        asi_dir = os.path.join(self.game_path, "ASI")
+        if not os.path.exists(asi_dir): return
+        for file in os.listdir(asi_dir):
+            if file.endswith((".asi", ".asi.disabled")):
+                is_en = file.endswith(".asi")
+                row = QFrame(); row.setStyleSheet("background: #111; border-radius: 8px;"); row.setFixedHeight(50)
+                rl = QHBoxLayout(row); name = QLabel(file.split(".")[0].upper()); name.setStyleSheet("color: white; font-weight: bold; border: none;")
+                btn = QPushButton("ON" if is_en else "OFF"); btn.setFixedSize(50, 30)
+                btn.setStyleSheet(f"background: {'#32D74B' if is_en else '#333'}; color: black; border-radius: 5px; font-weight: 900;")
+                btn.clicked.connect(lambda ch, f=file: self.toggle_asi_file(f))
+                rl.addWidget(name); rl.addStretch(); rl.addWidget(btn); self.asi_layout.addWidget(row)
+
+    def toggle_asi_file(self, f):
+        d = os.path.join(self.game_path, "ASI"); old = os.path.join(d, f)
+        new = old + ".disabled" if f.endswith(".asi") else old.replace(".disabled", "")
+        try: os.rename(old, new); self.refresh_asi_list()
+        except: pass
+
+    def select_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "Выбор папки")
+        if path:
+            self.game_path = path; self.settings.setValue("game_path", path)
+            self.path_label.setText(f"Путь: {path}")
+
+    def load_photo(self):
+        p = res_path("assets/photo.png")
+        if os.path.exists(p): self.photo.setPixmap(QPixmap(p).scaled(self.photo.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def start_game(self):
+        if self.selected_srv and self.game_path:
+            ip, port = SERVERS[self.selected_srv]["ip"].split(":")
+            
+            # 1. Запуск aggstarter.exe со всеми флагами из батника
+            agg_exe = os.path.join(self.game_path, "aggstarter.exe")
+            if os.path.exists(agg_exe):
+                # Аргументы: -amazing -c -h IP -p PORT -n NICK --stream --launcher
+                args = [
+                    agg_exe, 
+                    "-amazing", "-c", 
+                    "-h", ip, 
+                    "-p", port, 
+                    "-n", self.nick.text(), 
+                    "--stream", "--launcher"
+                ]
+                subprocess.Popen(args, cwd=self.game_path)
+            
+            # 2. Запуск quick_asi.exe (аналог start /b "quick_asi.exe" -p gta_sa.exe -silent)
+            qasi_exe = os.path.join(self.game_path, "quick_asi.exe")
+            if os.path.exists(qasi_exe):
+                qargs = [qasi_exe, "-p", "gta_sa.exe", "-silent"]
+                # creationflags=subprocess.CREATE_NO_WINDOW делает запуск "тихим" (как /b в батнике)
+                subprocess.Popen(qargs, cwd=self.game_path, creationflags=0x08000000)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton: self._drag_pos = e.globalPos()
+    def mouseMoveEvent(self, e):
+        if self._drag_pos: diff = e.globalPos() - self._drag_pos; self.move(self.pos() + diff); self._drag_pos = e.globalPos()
+    def mouseReleaseEvent(self, e): self._drag_pos = None
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv); ex = AmazingElite(); ex.show(); sys.exit(app.exec_())
